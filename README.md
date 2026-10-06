@@ -52,7 +52,7 @@ All times at the tool boundary are in **seconds** (converted to CapCut's microse
 |---|---|
 | `capcut_list_drafts` | list drafts + duration + lock status |
 | `capcut_read_timeline` | full read: canvas, fps, tracks, every segment |
-| `capcut_clone_draft` | copy a draft (optionally emptied) for a fresh build |
+| `capcut_clone_draft` | full copy of a draft (all subfolders, own `draft_id`; optionally emptied) for a fresh build |
 | `capcut_add_video / _image / _audio` | place media at a time on a track |
 | `capcut_add_text` | text overlay (needs a text template draft) |
 | `capcut_add_track` | new video/audio/text/sticker track |
@@ -72,7 +72,7 @@ A Claude **skill** ships in [`skills/capcut-reels/`](skills/capcut-reels/SKILL.m
 - Won't save while CapCut is open (autosave clobber protection).
 - `.mcpbak` backup + atomic temp-then-rename write.
 - Post-edit validation (overlaps, duplicate material ids, layer-order clashes, missing media).
-- New drafts are **cloned from a known-good base**, never built from an empty object.
+- New drafts are **cloned from a known-good base**, never built from an empty object. The base is only read; the clone gets its own `draft_id`.
 
 ## Limitations (be honest with these)
 - CapCut's draft format is **proprietary and undocumented**, and changes between CapCut versions. This server is defensive (clone-from-template, backup, validate) but a CapCut update can still shift the schema — keep the backups.
@@ -82,6 +82,7 @@ A Claude **skill** ships in [`skills/capcut-reels/`](skills/capcut-reels/SKILL.m
 ## Architecture
 - `src/core.js` — pure engine (`CapCutDraft` class + `cloneDraft`/`listDrafts`). Testable without MCP.
 - `src/server.js` — thin MCP stdio server; declares the tools and calls the core.
+- `test/` — regression tests on throwaway fixture drafts (`npm test`, Node ≥ 22; never touches your real drafts).
 
 ## License & credits
 MIT © 2026 [James Aldrin Boncales](https://jmsldrn.com). Contributions and issues welcome. If this saves you time, a link back to [jmsldrn.com](https://jmsldrn.com) is appreciated — not required.

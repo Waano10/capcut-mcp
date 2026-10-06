@@ -303,19 +303,47 @@ export class CapCutDraft {
   }
 }
 
-// clone a whole draft folder to a new name (valid scaffolding), optionally emptied
+// a draft name is a single folder name inside DRAFTS_DIR
+function checkDraftName(name) {
+  if (typeof name !== 'string' || !name.trim() || name === '.' || name === '..' || /[\\/\0]/.test(name)) throw new Error(`invalid draft name: ${JSON.stringify(name)}`);
+}
+
+// clone a whole draft folder to a new name (valid scaffolding), optionally emptied.
+// Like CapCut's own "Duplicate": every file and subfolder (Timelines/, Resources/, …) is copied,
+// the copy gets a fresh draft_id/name/paths in draft_meta_info.json, and timeline ids are kept
+// (they must match Timelines/<main_timeline_id>/). The base draft is only read, never written.
 export function cloneDraft(base, newName, { empty = false } = {}) {
+  checkDraftName(base); checkDraftName(newName);
   const src = path.join(DRAFTS_DIR, base), dst = path.join(DRAFTS_DIR, newName);
   if (!contentFile(src)) throw new Error(`base draft not found: ${base}`);
   if (fs.existsSync(dst)) throw new Error(`draft already exists: ${newName}`);
-  fs.mkdirSync(dst, { recursive: true });
-  for (const fn of fs.readdirSync(src)) { const s = path.join(src, fn); try { if (fs.statSync(s).isFile()) fs.copyFileSync(s, path.join(dst, fn)); } catch {} }
-  if (empty) {
-    const d = new CapCutDraft(newName);
-    for (const k of Object.keys(d.content.materials)) if (Array.isArray(d.content.materials[k])) d.content.materials[k] = [];
-    for (const tr of d.content.tracks) tr.segments = [];
-    d.content.duration = 0; d.content.id = uid(); d.content.name = newName;
-    fs.writeFileSync(d.contentPath, JSON.stringify(d.content));
+  // build in a hidden staging folder, then rename: a failure never leaves a half-copied draft behind
+  const tmp = path.join(DRAFTS_DIR, `.${newName}.cloning-${process.pid}-${Date.now()}`);
+  try {
+    fs.cpSync(src, tmp, { recursive: true, errorOnExist: true, force: false, preserveTimestamps: true,
+      filter: s => path.basename(s) !== '.locked' });           // CapCut's open-lock belongs to the original only
+    const metaPath = path.join(tmp, 'draft_meta_info.json');
+    if (fs.existsSync(metaPath)) {
+      const meta = JSON.parse(fs.readFileSync(metaPath, 'utf8'));
+      const slash = p => process.platform === 'win32' ? p.replace(/\\/g, '/') : p;   // CapCut writes forward slashes
+      const now = Date.now() * 1000;                                                // CapCut timestamps are µs
+      Object.assign(meta, { draft_id: uid(), draft_name: newName, draft_fold_path: slash(dst), draft_root_path: slash(DRAFTS_DIR),
+        tm_draft_create: now, tm_draft_modified: now });
+      fs.writeFileSync(metaPath, JSON.stringify(meta));
+    }
+    if (empty) {
+      const cPath = contentFile(tmp);
+      const c = JSON.parse(fs.readFileSync(cPath, 'utf8'));
+      for (const k of Object.keys(c.materials || {})) if (Array.isArray(c.materials[k])) c.materials[k] = [];
+      for (const tr of c.tracks || []) tr.segments = [];
+      c.duration = 0;
+      const json = JSON.stringify(c);
+      for (const p of [cPath, timelineMirror(tmp)].filter(Boolean)) fs.writeFileSync(p, json);
+    }
+    fs.renameSync(tmp, dst);
+  } catch (e) {
+    fs.rmSync(tmp, { recursive: true, force: true });
+    throw e;
   }
   return { created: newName, dir: dst };
 }
