@@ -11,7 +11,9 @@ const SANDBOX = fs.mkdtempSync(path.join(os.tmpdir(), 'capcut-mcp-test-'));
 const ROOT = path.join(SANDBOX, 'drafts');
 fs.mkdirSync(ROOT);
 process.env.CAPCUT_DRAFTS_DIR = ROOT;               // must be set before core.js is loaded
-const { cloneDraft, CapCutDraft, DRAFTS_DIR } = await import('../src/core.js');
+const { cloneDraft, CapCutDraft, DRAFTS_DIR, _probe } = await import('../src/core.js');
+// these tests are about cloning: behave as if CapCut were closed, even if it is open on this machine
+_probe.exec = () => { const e = new Error('no match'); e.status = 1; throw e; };
 
 const BASE = 'Base Draft';
 const TL_ID = '330C4A38-19F1-4912-AB6F-D86ECD4BC164';

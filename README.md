@@ -69,7 +69,7 @@ All times at the tool boundary are in **seconds** (converted to CapCut's microse
 A Claude **skill** ships in [`skills/capcut-reels/`](skills/capcut-reels/SKILL.md). It teaches Claude the full production pipeline these tools were built for — record → captions (WhisperFlow) → motion graphics (HyperFrames) → probe/render (ffprobe/ffmpeg) → assemble & caption the CapCut draft via this MCP. Copy the `capcut-reels` folder into your Claude skills directory to install it.
 
 ## Guardrails
-- Won't save while CapCut is open (autosave clobber protection).
+- Won't save while CapCut is open (autosave clobber protection) — detected on macOS (`pgrep -x CapCut`) and Windows (`tasklist`); not on Linux.
 - `.mcpbak` backup + atomic temp-then-rename write.
 - Post-edit validation (overlaps, duplicate material ids, layer-order clashes, missing media).
 - New drafts are **cloned from a known-good base**, never built from an empty object. The base is only read; the clone gets its own `draft_id`.

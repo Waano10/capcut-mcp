@@ -84,10 +84,19 @@ export function listDrafts() {
   });
 }
 
+// platform + command runner used by capcutRunning (swapped out in tests)
+export const _probe = { platform: process.platform, exec: execSync };
+
 // is CapCut running? (writing while open gets clobbered by autosave)
-function capcutRunning() {
-  if (process.platform !== 'win32') return false;
-  try { return /CapCut\.exe/i.test(execSync('tasklist /FI "IMAGENAME eq CapCut.exe" /NH', { encoding: 'utf8' })); }
+export function capcutRunning() {
+  const { platform, exec } = _probe;
+  if (platform === 'darwin') {
+    // exact executable name: matches the main app whatever its .app is called ("CapCut 2.app"…), not "CapCut Helper"
+    try { exec('pgrep -x CapCut', { stdio: 'ignore' }); return true; }
+    catch (e) { return e.status !== 1; }               // pgrep exits 1 on "no match"; any other failure: can't tell, assume open
+  }
+  if (platform !== 'win32') return false;
+  try { return /CapCut\.exe/i.test(exec('tasklist /FI "IMAGENAME eq CapCut.exe" /NH', { encoding: 'utf8' })); }
   catch { return false; }
 }
 
