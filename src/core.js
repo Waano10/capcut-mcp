@@ -22,6 +22,21 @@ export const DRAFTS_DIR =
 // a draft known to contain video/text/audio layers, used to harvest templates
 const TEMPLATE_DRAFT = process.env.CAPCUT_TEMPLATE_DRAFT || '0723';
 
+// the timeline JSON: older CapCut builds write draft_content.json, newer (e.g. macOS) write draft_info.json
+const CONTENT_FILES = ['draft_content.json', 'draft_info.json'];
+export function contentFile(dir) {
+  for (const f of CONTENT_FILES) { const p = path.join(dir, f); if (fs.existsSync(p)) return p; }
+  return null;
+}
+// newer CapCut also mirrors the main timeline at Timelines/<main_timeline_id>/draft_info.json
+function timelineMirror(dir) {
+  try {
+    const { main_timeline_id: id } = JSON.parse(fs.readFileSync(path.join(dir, 'Timelines', 'project.json'), 'utf8'));
+    const p = id && path.join(dir, 'Timelines', id, 'draft_info.json');
+    return p && fs.existsSync(p) ? p : null;
+  } catch { return null; }
+}
+
 const uid = () => crypto.randomUUID().toUpperCase();
 const clone = o => JSON.parse(JSON.stringify(o));
 const US = 1e6;
@@ -60,11 +75,11 @@ function harvest(content) {
 
 export function listDrafts() {
   let names = [];
-  try { names = fs.readdirSync(DRAFTS_DIR).filter(n => { try { return fs.statSync(path.join(DRAFTS_DIR, n)).isDirectory() && fs.existsSync(path.join(DRAFTS_DIR, n, 'draft_content.json')); } catch { return false; } }); } catch {}
+  try { names = fs.readdirSync(DRAFTS_DIR).filter(n => { try { return fs.statSync(path.join(DRAFTS_DIR, n)).isDirectory() && contentFile(path.join(DRAFTS_DIR, n)); } catch { return false; } }); } catch {}
   return names.map(name => {
     const dir = path.join(DRAFTS_DIR, name);
     let dur = null;
-    try { dur = JSON.parse(fs.readFileSync(path.join(dir, 'draft_content.json'), 'utf8')).duration / US; } catch {}
+    try { dur = JSON.parse(fs.readFileSync(contentFile(dir), 'utf8')).duration / US; } catch {}
     return { name, locked: fs.existsSync(path.join(dir, '.locked')), durationSec: dur };
   });
 }
@@ -80,8 +95,9 @@ export class CapCutDraft {
   constructor(name) {
     this.name = name;
     this.dir = path.join(DRAFTS_DIR, name);
-    if (!fs.existsSync(path.join(this.dir, 'draft_content.json'))) throw new Error(`draft not found: ${name} (in ${DRAFTS_DIR})`);
-    this.content = JSON.parse(fs.readFileSync(path.join(this.dir, 'draft_content.json'), 'utf8'));
+    this.contentPath = contentFile(this.dir);
+    if (!this.contentPath) throw new Error(`draft not found: ${name} (no ${CONTENT_FILES.join(' / ')} in ${DRAFTS_DIR})`);
+    this.content = JSON.parse(fs.readFileSync(this.contentPath, 'utf8'));
     this.metaPath = path.join(this.dir, 'draft_meta_info.json');
     this.meta = fs.existsSync(this.metaPath) ? JSON.parse(fs.readFileSync(this.metaPath, 'utf8')) : null;
     this._tpl = null;
@@ -91,7 +107,7 @@ export class CapCutDraft {
     let t = harvest(this.content);
     // fill any missing segment type from the template draft
     if (!t.video || !t.text || !t.audio) {
-      try { const base = JSON.parse(fs.readFileSync(path.join(DRAFTS_DIR, TEMPLATE_DRAFT, 'draft_content.json'), 'utf8')); const bt = harvest(base);
+      try { const base = JSON.parse(fs.readFileSync(contentFile(path.join(DRAFTS_DIR, TEMPLATE_DRAFT)), 'utf8')); const bt = harvest(base);
         for (const k of ['video', 'audio', 'text', 'image']) if (!t[k] && bt[k]) t[k] = bt[k];
         for (const k of Object.keys(bt.tracks)) if (!t.tracks[k]) t.tracks[k] = bt.tracks[k];
       } catch {}
@@ -277,9 +293,11 @@ export class CapCutDraft {
       if (capcutRunning()) throw new Error('CapCut is running. Close it before saving, or pass force:true.');
     }
     const v = this.validate();
-    const cPath = path.join(this.dir, 'draft_content.json');
-    try { fs.copyFileSync(cPath, cPath + '.mcpbak'); } catch {}
-    const tmp = cPath + '.tmp'; fs.writeFileSync(tmp, JSON.stringify(this.content)); fs.renameSync(tmp, cPath);
+    const json = JSON.stringify(this.content);
+    for (const cPath of [this.contentPath, timelineMirror(this.dir)].filter(Boolean)) {
+      try { fs.copyFileSync(cPath, cPath + '.mcpbak'); } catch {}
+      const tmp = cPath + '.tmp'; fs.writeFileSync(tmp, json); fs.renameSync(tmp, cPath);
+    }
     if (this.meta) { try { fs.copyFileSync(this.metaPath, this.metaPath + '.mcpbak'); } catch {} const mt = this.metaPath + '.tmp'; fs.writeFileSync(mt, JSON.stringify(this.meta)); fs.renameSync(mt, this.metaPath); }
     return { saved: this.name, durationSec: +(this.content.duration / US).toFixed(3), validation: v };
   }
@@ -288,7 +306,7 @@ export class CapCutDraft {
 // clone a whole draft folder to a new name (valid scaffolding), optionally emptied
 export function cloneDraft(base, newName, { empty = false } = {}) {
   const src = path.join(DRAFTS_DIR, base), dst = path.join(DRAFTS_DIR, newName);
-  if (!fs.existsSync(path.join(src, 'draft_content.json'))) throw new Error(`base draft not found: ${base}`);
+  if (!contentFile(src)) throw new Error(`base draft not found: ${base}`);
   if (fs.existsSync(dst)) throw new Error(`draft already exists: ${newName}`);
   fs.mkdirSync(dst, { recursive: true });
   for (const fn of fs.readdirSync(src)) { const s = path.join(src, fn); try { if (fs.statSync(s).isFile()) fs.copyFileSync(s, path.join(dst, fn)); } catch {} }
@@ -297,7 +315,7 @@ export function cloneDraft(base, newName, { empty = false } = {}) {
     for (const k of Object.keys(d.content.materials)) if (Array.isArray(d.content.materials[k])) d.content.materials[k] = [];
     for (const tr of d.content.tracks) tr.segments = [];
     d.content.duration = 0; d.content.id = uid(); d.content.name = newName;
-    fs.writeFileSync(path.join(dst, 'draft_content.json'), JSON.stringify(d.content));
+    fs.writeFileSync(d.contentPath, JSON.stringify(d.content));
   }
   return { created: newName, dir: dst };
 }
